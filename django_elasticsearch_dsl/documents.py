@@ -240,3 +240,38 @@ class DocType(DSLDocType):
         return cls.bulk(
             cls._get_actions(object_list, action), **kwargs
         )
+
+    @classmethod
+    def index_items(cls, item_ids, refresh=False, **kwargs):
+
+        items = cls.get_queryset().filter(pk__in=item_ids)
+
+        success, errors = cls.update_documents(items, refresh=refresh, **kwargs)
+        return success, errors
+
+    @classmethod
+    def index_all(cls, chunk_size=500, datafilter=None, from_id=None, to_id=None, verbose=False):
+        start = time.time()
+        print('Collecting items for preparing to index %s...' % cls._doc_type.index)
+        items = cls.get_queryset()
+        if datafilter:
+            items = items.filter(datafilter)
+        if datafilter:
+            items = items.filter(datafilter)
+        if from_id:
+            items = items.filter(id__gte=from_id)
+        if to_id:
+            items = items.filter(id__lte=to_id)
+        item_ids = items.values_list('id', flat=True).order_by('id')
+        pending_list = list(item_ids)
+        total_count = len(pending_list)
+        print('Indexing %d documents' % total_count)
+        pending_list = list(chunks(pending_list, chunk_size))
+        for i, item_ids in enumerate(pending_list):
+            success, errors = cls.index_items(item_ids)
+            cur_id = '%d (%d-%d, %.1f%%)' % (i, item_ids[0], item_ids[-1], i * chunk_size / total_count * 100)
+            if verbose and errors:
+                print('Fail: \n%s' % '\n'.join(map(json.dumps, errors)))
+            print(cur_id, 'Total: {total}, Success: {success}, Fail: {fail}'.format(
+                total=len(item_ids), success=success, fail=len(errors)))
+        print('Indexing %s completed, time consumed %f seconds.' % (cls._doc_type.index, time.time() - start))
