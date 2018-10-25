@@ -216,16 +216,17 @@ class DocType(DSLDocType):
 
     @classmethod
     def _get_actions(cls, object_list, action):
+        instance = cls()
         if cls._doc_type.queryset_pagination is not None:
             paginator = Paginator(
                 object_list, cls._doc_type.queryset_pagination
             )
             for page in paginator.page_range:
                 for object_instance in paginator.page(page).object_list:
-                    yield cls()._prepare_action(object_instance, action)
+                    yield instance._prepare_action(object_instance, action)
         else:
             for object_instance in object_list:
-                yield cls()._prepare_action(object_instance, action)
+                yield instance._prepare_action(object_instance, action)
 
     @classmethod
     def update_documents(cls, thing, refresh=None, action='index', using=None, **kwargs):
