@@ -120,9 +120,14 @@ class DocTypeMeta(DSLDocTypeMeta):
 @add_metaclass(DocTypeMeta)
 class DocType(DSLDocType):
 
-    def __init__(self, related_instance_to_ignore=None, **kwargs):
+    def __init__(self, instance=None, related_instance_to_ignore=None, **kwargs):
         super(DocType, self).__init__(**kwargs)
+        self.meta.instance = instance
         self._related_instance_to_ignore = related_instance_to_ignore
+        if instance:
+            self._id = instance.id
+            for key, value in self.prepare(instance).items():
+                setattr(self, key, value)
 
     def __eq__(self, other):
         return id(self) == id(other)
@@ -195,8 +200,8 @@ class DocType(DSLDocType):
             )
 
     @classmethod
-    def bulk(cls, actions, **kwargs):
-        return bulk(client=connections.get_connection(cls._doc_type.using), actions=actions, **kwargs)
+    def bulk(cls, actions, using=None, **kwargs):
+        return bulk(client=connections.get_connection(using or cls._doc_type.using), actions=actions, **kwargs)
 
     def _prepare_action(self, object_instance, action):
         return {
@@ -223,7 +228,7 @@ class DocType(DSLDocType):
                 yield cls()._prepare_action(object_instance, action)
 
     @classmethod
-    def update_documents(cls, thing, refresh=None, action='index', **kwargs):
+    def update_documents(cls, thing, refresh=None, action='index', using=None, **kwargs):
         """
         Update each document in ES for a model, iterable of models or queryset
         """
@@ -238,19 +243,19 @@ class DocType(DSLDocType):
             object_list = thing
 
         return cls.bulk(
-            cls._get_actions(object_list, action), **kwargs
+            cls._get_actions(object_list, action), using=using, **kwargs
         )
 
     @classmethod
-    def index_items(cls, item_ids, refresh=False, **kwargs):
+    def index_items(cls, item_ids, refresh=False, using=None, **kwargs):
 
         items = cls.get_queryset().filter(pk__in=item_ids)
 
-        success, errors = cls.update_documents(items, refresh=refresh, **kwargs)
+        success, errors = cls.update_documents(items, refresh=refresh, using=using, **kwargs)
         return success, errors
 
     @classmethod
-    def index_all(cls, chunk_size=500, datafilter=None, from_id=None, to_id=None, verbose=False):
+    def index_all(cls, chunk_size=500, datafilter=None, from_id=None, to_id=None, using=None, verbose=False):
         start = time.time()
         print('Collecting items for preparing to index %s...' % cls._doc_type.index)
         items = cls.get_queryset()
@@ -268,7 +273,7 @@ class DocType(DSLDocType):
         print('Indexing %d documents' % total_count)
         pending_list = list(chunks(pending_list, chunk_size))
         for i, item_ids in enumerate(pending_list):
-            success, errors = cls.index_items(item_ids)
+            success, errors = cls.index_items(item_ids, using=using)
             cur_id = '%d (%d-%d, %.1f%%)' % (i, item_ids[0], item_ids[-1], i * chunk_size / total_count * 100)
             if verbose and errors:
                 print('Fail: \n%s' % '\n'.join(map(json.dumps, errors)))
