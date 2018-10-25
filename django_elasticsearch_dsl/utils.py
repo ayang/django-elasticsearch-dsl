@@ -14,3 +14,9 @@ def import_class(path):
                           "" % (module_path, class_name))
 
     return getattr(module_itself, class_name)
+
+
+def chunks(l, n):
+    """Iterate iterator l as chunks of length n."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]

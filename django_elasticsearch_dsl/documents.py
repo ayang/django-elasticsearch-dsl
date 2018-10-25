@@ -1,9 +1,12 @@
 from __future__ import unicode_literals
+import json
+import time
 
 from django.db import models
 from django.core.paginator import Paginator
 from django.utils.six import add_metaclass, iteritems
 from elasticsearch.helpers import bulk
+from elasticsearch_dsl import connections
 from elasticsearch_dsl import DocType as DSLDocType
 from elasticsearch_dsl.document import DocTypeMeta as DSLDocTypeMeta
 from elasticsearch_dsl.field import Field
@@ -25,6 +28,7 @@ from .fields import (
 from .indices import Index
 from .registries import registry
 from .search import Search
+from .utils import chunks
 
 model_field_class_to_field_class = {
     models.AutoField: IntegerField,
@@ -51,6 +55,7 @@ model_field_class_to_field_class = {
 
 
 class DocTypeMeta(DSLDocTypeMeta):
+
     def __new__(cls, name, bases, attrs):
         """
         Subclass default DocTypeMeta to generate ES fields from django
@@ -114,6 +119,7 @@ class DocTypeMeta(DSLDocTypeMeta):
 
 @add_metaclass(DocTypeMeta)
 class DocType(DSLDocType):
+
     def __init__(self, related_instance_to_ignore=None, **kwargs):
         super(DocType, self).__init__(**kwargs)
         self._related_instance_to_ignore = related_instance_to_ignore
@@ -133,11 +139,12 @@ class DocType(DSLDocType):
             model=cls._doc_type.model
         )
 
-    def get_queryset(self):
+    @classmethod
+    def get_queryset(cls):
         """
         Return the queryset that should be indexed by this doc type.
         """
-        return self._doc_type.model._default_manager.all()
+        return cls._doc_type.model._default_manager.all()
 
     def prepare(self, instance):
         """
@@ -187,8 +194,9 @@ class DocType(DSLDocType):
                 "to an Elasticsearch field!".format(field_name)
             )
 
-    def bulk(self, actions, **kwargs):
-        return bulk(client=self.connection, actions=actions, **kwargs)
+    @classmethod
+    def bulk(cls, actions, **kwargs):
+        return bulk(client=connections.get_connection(cls._doc_type.using), actions=actions, **kwargs)
 
     def _prepare_action(self, object_instance, action):
         return {
@@ -201,24 +209,26 @@ class DocType(DSLDocType):
             ),
         }
 
-    def _get_actions(self, object_list, action):
-        if self._doc_type.queryset_pagination is not None:
+    @classmethod
+    def _get_actions(cls, object_list, action):
+        if cls._doc_type.queryset_pagination is not None:
             paginator = Paginator(
-                object_list, self._doc_type.queryset_pagination
+                object_list, cls._doc_type.queryset_pagination
             )
             for page in paginator.page_range:
                 for object_instance in paginator.page(page).object_list:
-                    yield self._prepare_action(object_instance, action)
+                    yield cls()._prepare_action(object_instance, action)
         else:
             for object_instance in object_list:
-                yield self._prepare_action(object_instance, action)
+                yield cls()._prepare_action(object_instance, action)
 
-    def update(self, thing, refresh=None, action='index', **kwargs):
+    @classmethod
+    def update_documents(cls, thing, refresh=None, action='index', **kwargs):
         """
         Update each document in ES for a model, iterable of models or queryset
         """
         if refresh is True or (
-            refresh is None and self._doc_type.auto_refresh
+            refresh is None and cls._doc_type.auto_refresh
         ):
             kwargs['refresh'] = True
 
@@ -227,6 +237,6 @@ class DocType(DSLDocType):
         else:
             object_list = thing
 
-        return self.bulk(
-            self._get_actions(object_list, action), **kwargs
+        return cls.bulk(
+            cls._get_actions(object_list, action), **kwargs
         )
